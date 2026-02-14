@@ -353,6 +353,8 @@ export async function POST(req: NextRequest) {
 
     // If we have a valid user, extract action items using AI
     let actionItems: ActionItem[] = [];
+    const createdTaskIds: string[] = [];
+    
     if (userId && emailText) {
       try {
         actionItems = await extractActionItems(emailData.subject, emailText, forwardedInfo);
@@ -367,6 +369,45 @@ export async function POST(req: NextRequest) {
               updated_at: new Date().toISOString(),
             })
             .eq('id', emailRecord.id);
+
+          // Create actual tasks from action items
+          for (const action of actionItems) {
+            const { data: task, error: taskError } = await supabase
+              .from('tasks')
+              .insert({
+                user_id: userId,
+                title: action.title,
+                description: action.description || `From email: ${forwardedInfo.isForwarded ? forwardedInfo.originalSubject : emailData.subject}`,
+                status: 'todo',
+                priority: action.priority || 'medium',
+                due_date: action.due_date || null,
+                estimated_time_minutes: action.estimated_time_minutes || null,
+                source_type: 'email',
+                source_id: emailRecord.id,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+              .select()
+              .single();
+
+            if (taskError) {
+              console.error('Error creating task from action item:', taskError);
+            } else if (task) {
+              createdTaskIds.push(task.id);
+            }
+          }
+
+          // Update email with created task IDs
+          if (createdTaskIds.length > 0) {
+            await supabase
+              .from('emails')
+              .update({
+                created_task_ids: createdTaskIds,
+                status: 'completed',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', emailRecord.id);
+          }
         }
       } catch (aiError) {
         console.error('Error during AI extraction:', aiError);
@@ -381,6 +422,13 @@ export async function POST(req: NextRequest) {
       userId: userId,
       actionItemsExtracted: actionItems.length,
       actions: actionItems,
+      tasksCreated: createdTaskIds.length,
+      taskIds: createdTaskIds,
+      forwardedEmail: forwardedInfo.isForwarded ? {
+        originalSender: forwardedInfo.originalSender,
+        originalSubject: forwardedInfo.originalSubject,
+        originalDate: forwardedInfo.originalDate,
+      } : null,
     });
 
   } catch (error) {
