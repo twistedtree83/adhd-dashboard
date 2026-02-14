@@ -269,28 +269,25 @@ export async function POST(req: NextRequest) {
     }
 
     // Log for debugging
-    console.log('[Email Webhook] Received signature:', signature.substring(0, 30) + '...');
+    console.log('[Email Webhook] Received signature:', signature ? signature.substring(0, 30) + '...' : 'empty');
     console.log('[Email Webhook] Payload length:', payload.length);
     console.log('[Email Webhook] Payload preview:', payload.substring(0, 200) + '...');
 
-    // Allow bypass in development or if RAILWAY_ENVIRONMENT is not production
-    const isDev = process.env.RAILWAY_ENVIRONMENT !== 'production';
+    // Allow bypass via env variable for testing
+    const verifyEnabled = process.env.WEBHOOK_VERIFY_SIGNATURE !== 'false';
     
-    if (!verifyWebhookSignature(payload, signature, secret)) {
-      console.error('[Email Webhook] Invalid signature - expected:', 
-        crypto.createHmac('sha256', secret.replace(/^whsec_/, '')).update(payload, 'utf8').digest('hex').substring(0, 30) + '...');
-      
-      // In production, reject; in dev/staging, warn and continue
-      if (process.env.RAILWAY_ENVIRONMENT === 'production') {
+    if (verifyEnabled) {
+      if (!verifyWebhookSignature(payload, signature, secret)) {
+        console.error('[Email Webhook] Invalid signature - expected:', 
+          crypto.createHmac('sha256', secret.replace(/^whsec_/, '')).update(payload, 'utf8').digest('hex').substring(0, 30) + '...');
         return NextResponse.json(
           { error: 'Invalid signature' },
           { status: 401 }
         );
-      } else {
-        console.warn('[Email Webhook] Signature invalid but continuing in non-production environment');
       }
-    } else {
       console.log('[Email Webhook] Signature verified successfully');
+    } else {
+      console.warn('[Email Webhook] Signature verification DISABLED - processing anyway');
     }
 
     // Parse the email payload
