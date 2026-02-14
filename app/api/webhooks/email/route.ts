@@ -43,8 +43,28 @@ function verifyWebhookSignature(
 // Extract action items from email using OpenAI GPT-4o-mini
 async function extractActionItems(
   subject: string,
-  body: string
+  body: string,
+  forwardedInfo?: {
+    isForwarded: boolean;
+    originalSender?: string;
+    originalSubject?: string;
+    originalBody?: string;
+    originalDate?: string;
+  }
 ): Promise<ActionItem[]> {
+  // Use forwarded content if available
+  const effectiveSubject = forwardedInfo?.isForwarded && forwardedInfo.originalSubject
+    ? forwardedInfo.originalSubject
+    : subject;
+  
+  const effectiveBody = forwardedInfo?.isForwarded && forwardedInfo.originalBody
+    ? cleanEmailBody(forwardedInfo.originalBody)
+    : cleanEmailBody(body);
+
+  const forwardedContext = forwardedInfo?.isForwarded
+    ? `\n\nNOTE: This is a forwarded email. Original sender: ${forwardedInfo.originalSender || 'Unknown'}, Date: ${forwardedInfo.originalDate || 'Unknown'}`
+    : '';
+
   const prompt = `Extract actionable tasks from this email. 
 
 Return a JSON object with an "actions" array containing objects with these fields:
@@ -56,8 +76,8 @@ Return a JSON object with an "actions" array containing objects with these field
 
 If no actionable tasks are found, return an empty actions array.
 
-Email Subject: ${subject}
-Email Body: ${body.substring(0, 4000)}
+Email Subject: ${effectiveSubject}
+Email Body: ${effectiveBody.substring(0, 4000)}${forwardedContext}
 
 Respond with JSON only in this format:
 {
@@ -106,6 +126,96 @@ Respond with JSON only in this format:
     console.error('Error extracting action items:', error);
     return [];
   }
+}
+
+// Parse forwarded email content to extract original sender, subject, and body
+function parseForwardedEmail(text: string): {
+  isForwarded: boolean;
+  originalSender?: string;
+  originalSubject?: string;
+  originalBody?: string;
+  originalDate?: string;
+} {
+  if (!text) return { isForwarded: false };
+
+  // Common forwarded email patterns
+  const forwardPatterns = [
+    // Gmail/Standard: ---------- Forwarded message ---------
+    /[-]+\s*Forwarded message\s*[-]+[\s\S]*?From:\s*([^\n]+)\n[\s\S]*?Date:\s*([^\n]+)\n[\s\S]*?Subject:\s*([^\n]+)\n[\s\S]*?To:\s*([^\n]+)\n\n([\s\S]*)/i,
+    // Outlook: -----Original Message-----
+    /[-]+\s*Original Message\s*[-]+[\s\S]*?From:\s*([^\n]+)[\s\S]*?Sent:\s*([^\n]+)[\s\S]*?To:\s*([^\n]+)[\s\S]*?Subject:\s*([^\n]+)\n\n([\s\S]*)/i,
+    // Apple Mail: Begin forwarded message:
+    /Begin forwarded message:[\s\S]*?From:\s*([^\n]+)[\s\S]*?Date:\s*([^\n]+)[\s\S]*?Subject:\s*([^\n]+)[\s\S]*?To:\s*([^\n]+)\n\n([\s\S]*)/i,
+    // Simple pattern: From: ... Subject: ...
+    /From:\s*([^\n]+)[\s\S]*?Subject:\s*([^\n]+)[\s\S]*?\n\n([\s\S]*)/i,
+  ];
+
+  for (const pattern of forwardPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      // Pattern matches, extract based on which pattern matched
+      if (pattern.source.includes('Forwarded message') || pattern.source.includes('Original Message')) {
+        return {
+          isForwarded: true,
+          originalSender: match[1]?.trim(),
+          originalDate: match[2]?.trim(),
+          originalSubject: match[3]?.trim(),
+          originalBody: match[5]?.trim() || match[4]?.trim(),
+        };
+      } else if (pattern.source.includes('Begin forwarded message')) {
+        return {
+          isForwarded: true,
+          originalSender: match[1]?.trim(),
+          originalDate: match[2]?.trim(),
+          originalSubject: match[3]?.trim(),
+          originalBody: match[5]?.trim() || match[4]?.trim(),
+        };
+      } else {
+        // Simple pattern
+        return {
+          isForwarded: true,
+          originalSender: match[1]?.trim(),
+          originalSubject: match[2]?.trim(),
+          originalBody: match[3]?.trim(),
+        };
+      }
+    }
+  }
+
+  return { isForwarded: false };
+}
+
+// Clean up email body (remove signatures, footers)
+function cleanEmailBody(body: string): string {
+  if (!body) return '';
+
+  // Common signature separators
+  const signaturePatterns = [
+    /^\s*[-]+\s*$/m,                              // -----
+    /^\s*_{2,}\s*$/m,                            // ____
+    /^\s*--\s*$/m,                               // --
+    /^\s*Best regards,?\s*$/im,                  // Best regards
+    /^\s*Kind regards,?\s*$/im,                  // Kind regards
+    /^\s*Regards,?\s*$/im,                       // Regards
+    /^\s*Cheers,?\s*$/im,                        // Cheers
+    /^\s*Thanks,?\s*$/im,                        // Thanks
+    /^\s*Sent from my \w+\s*$/im,                // Sent from my iPhone
+    /^\s*On \w+, \w+ \d+, \d+ at \d+:\d+,?\s*\w+.*wrote:\s*$/m,  // On Mon, Jan 1, 2024 at 10:00, John wrote:
+    /^\s*>?\s*\d{4}-\d{2}-\d{2}\s+\d+:\d+\s+GMT[+-]\d+.*$/m,  // Timestamp patterns
+  ];
+
+  let cleaned = body;
+
+  // Find the first signature marker and cut there
+  for (const pattern of signaturePatterns) {
+    const match = cleaned.match(pattern);
+    if (match && match.index) {
+      cleaned = cleaned.substring(0, match.index).trim();
+      break;
+    }
+  }
+
+  return cleaned;
 }
 
 // Find user by email address (from the 'to' field)
@@ -198,6 +308,17 @@ export async function POST(req: NextRequest) {
     const emailText = emailData.text || '';
     const emailHtml = emailData.html || '';
 
+    // Parse forwarded email if present
+    const forwardedInfo = parseForwardedEmail(emailText);
+    
+    if (forwardedInfo.isForwarded) {
+      console.log('[Email Webhook] Detected forwarded email:', {
+        originalSender: forwardedInfo.originalSender,
+        originalSubject: forwardedInfo.originalSubject,
+        originalDate: forwardedInfo.originalDate,
+      });
+    }
+
     // Store email in database
     const { data: emailRecord, error: emailError } = await supabase
       .from('emails')
@@ -212,6 +333,10 @@ export async function POST(req: NextRequest) {
         status: 'pending',
         thread_id: emailData.threadId || null,
         message_id: emailData.messageId || null,
+        is_forwarded: forwardedInfo.isForwarded,
+        forwarded_from: forwardedInfo.originalSender || null,
+        forwarded_subject: forwardedInfo.originalSubject || null,
+        forwarded_date: forwardedInfo.originalDate || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -230,7 +355,7 @@ export async function POST(req: NextRequest) {
     let actionItems: ActionItem[] = [];
     if (userId && emailText) {
       try {
-        actionItems = await extractActionItems(emailData.subject, emailText);
+        actionItems = await extractActionItems(emailData.subject, emailText, forwardedInfo);
 
         // Update email with extracted action items
         if (actionItems.length > 0) {
