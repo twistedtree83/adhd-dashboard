@@ -29,11 +29,16 @@ function verifyWebhookSignature(
       .update(payload)
       .digest('hex');
 
-    // Use timing-safe comparison to prevent timing attacks
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
+    // Constant-time comparison to prevent timing attacks
+    // Handle different length signatures gracefully
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expectedBuf = Buffer.from(expectedSignature, 'hex');
+    
+    if (sigBuf.length !== expectedBuf.length) {
+      return false;
+    }
+    
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;
@@ -259,13 +264,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Log for debugging
+    console.log('[Email Webhook] Received signature:', signature.substring(0, 20) + '...');
+    console.log('[Email Webhook] Payload length:', payload.length);
+
     if (!verifyWebhookSignature(payload, signature, secret)) {
-      console.error('Invalid webhook signature');
+      console.error('[Email Webhook] Invalid signature - expected:', 
+        crypto.createHmac('sha256', secret).update(payload).digest('hex').substring(0, 20) + '...');
       return NextResponse.json(
         { error: 'Invalid signature' },
         { status: 401 }
       );
     }
+    
+    console.log('[Email Webhook] Signature verified successfully');
 
     // Parse the email payload
     let emailData;
