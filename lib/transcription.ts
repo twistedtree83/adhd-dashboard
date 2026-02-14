@@ -6,13 +6,23 @@ import { createClient, LiveTranscriptionEvents, ListenLiveClient } from '@deepgr
 import OpenAI from 'openai';
 import { createAdminClient } from './supabase/server';
 
-// Deepgram client initialization
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '');
+// Lazy initialization of Deepgram client
+function getDeepgramClient() {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) {
+    throw new Error('DEEPGRAM_API_KEY is not configured');
+  }
+  return createClient(apiKey);
+}
 
 // OpenAI client for action extraction
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
+function getOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+  return new OpenAI({ apiKey });
+}
 
 // ----------------------------------------------------------------------------
 // Types
@@ -60,6 +70,7 @@ export async function startTranscription(meetingId: string): Promise<{
 }> {
   try {
     // Create a Deepgram live transcription connection
+    const deepgram = getDeepgramClient();
     const connection = deepgram.listen.live({
       model: 'nova-2',
       language: 'en-AU',
@@ -357,6 +368,7 @@ ${transcript}
 
 Respond with valid JSON only.`;
 
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
@@ -433,6 +445,7 @@ Transcript excerpt: ${transcript.slice(0, 1000)}
 
 Return only the title, nothing else.`;
 
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
