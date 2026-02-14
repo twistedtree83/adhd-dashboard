@@ -6,7 +6,14 @@ import { createRouteHandlerClient } from '@/lib/supabase/server';
 import { createClient } from '@deepgram/sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY || '');
+// Lazy initialization of Deepgram client
+function getDeepgramClient() {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) {
+    throw new Error('DEEPGRAM_API_KEY is not configured');
+  }
+  return createClient(apiKey);
+}
 
 // POST /api/transcribe - Transcribe uploaded audio
 export async function POST(req: NextRequest) {
@@ -35,6 +42,7 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // Send to Deepgram for transcription
+    const deepgram = getDeepgramClient();
     const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
       buffer,
       {

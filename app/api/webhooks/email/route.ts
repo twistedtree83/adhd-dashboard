@@ -8,9 +8,14 @@ import OpenAI from 'openai';
 import crypto from 'crypto';
 import { ActionItem } from '@/types';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization of OpenAI client
+function getOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+  return new OpenAI({ apiKey });
+}
 
 // Verify Resend webhook signature using HMAC-SHA256
 function verifyWebhookSignature(
@@ -68,6 +73,7 @@ Respond with JSON only in this format:
 }`;
 
   try {
+    const openai = getOpenAIClient();
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
