@@ -291,9 +291,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Parse the email payload
-    let emailData;
+    let payloadData;
     try {
-      emailData = JSON.parse(payload);
+      payloadData = JSON.parse(payload);
     } catch (error) {
       console.error('Failed to parse email payload:', error);
       return NextResponse.json(
@@ -302,9 +302,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resend webhook wraps email data in a "data" property
+    const emailData = payloadData.data || payloadData;
+    
+    console.log('[Email Webhook] Email data extracted:', {
+      from: emailData.from,
+      to: emailData.to,
+      subject: emailData.subject?.substring(0, 50),
+    });
+
     // Validate required fields
-    if (!emailData.to || !emailData.to.length || !emailData.subject) {
-      console.error('Missing required email fields');
+    if (!emailData.to || !emailData.subject) {
+      console.error('[Email Webhook] Missing required email fields:', { 
+        hasTo: !!emailData.to, 
+        hasSubject: !!emailData.subject,
+        keys: Object.keys(emailData).slice(0, 10)
+      });
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
