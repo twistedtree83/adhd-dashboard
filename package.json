@@ -11,9 +11,6 @@
     "start": "next start",
     "lint": "eslint"
   },
-  "engines": {
-    "node": ">=20.0.0"
-  },
   "dependencies": {
     "@deepgram/sdk": "^4.11.3",
     "@supabase/ssr": "^0.8.0",
