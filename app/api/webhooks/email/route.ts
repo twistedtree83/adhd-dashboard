@@ -273,10 +273,13 @@ export async function POST(req: NextRequest) {
     console.log('[Email Webhook] Payload length:', payload.length);
     console.log('[Email Webhook] Payload preview:', payload.substring(0, 200) + '...');
 
-    // Allow bypass via env variable for testing
+    // Allow bypass via env variable or Cloudflare Email Routing
     const verifyEnabled = process.env.WEBHOOK_VERIFY_SIGNATURE !== 'false';
+    const isCloudflare = signature === 'cloudflare-email-routing';
     
-    if (verifyEnabled) {
+    if (isCloudflare) {
+      console.log('[Email Webhook] Request from Cloudflare Email Routing - accepted');
+    } else if (verifyEnabled) {
       if (!verifyWebhookSignature(payload, signature, secret)) {
         console.error('[Email Webhook] Invalid signature - expected:', 
           crypto.createHmac('sha256', secret.replace(/^whsec_/, '')).update(payload, 'utf8').digest('hex').substring(0, 30) + '...');
